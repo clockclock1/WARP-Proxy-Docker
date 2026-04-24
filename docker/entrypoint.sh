@@ -1,0 +1,144 @@
+#!/bin/sh
+set -eu
+
+STATE_DIR="${STATE_DIR:-/var/lib/warp}"
+WIREPROXY_CONFIG="${WIREPROXY_CONFIG:-/etc/wireproxy/config.conf}"
+WGCF_ACCOUNT_FILE="${STATE_DIR}/wgcf-account.toml"
+WGCF_PROFILE_FILE="${STATE_DIR}/wgcf-profile.conf"
+
+ENABLE_HTTP_PROXY="${ENABLE_HTTP_PROXY:-true}"
+ENABLE_SOCKS5_PROXY="${ENABLE_SOCKS5_PROXY:-true}"
+HTTP_BIND_ADDR="${HTTP_BIND_ADDR:-0.0.0.0}"
+SOCKS5_BIND_ADDR="${SOCKS5_BIND_ADDR:-0.0.0.0}"
+HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8080}"
+SOCKS5_PROXY_PORT="${SOCKS5_PROXY_PORT:-1080}"
+
+to_bool() {
+  case "$1" in
+    1|true|TRUE|yes|YES|on|ON) echo "true" ;;
+    *) echo "false" ;;
+  esac
+}
+
+read_values() {
+  section="$1"
+  key="$2"
+  awk -F ' *= *' -v target_section="${section}" -v target_key="${key}" '
+    /^\[/ {
+      current=$0
+      gsub(/\[|\]/, "", current)
+      next
+    }
+    current == target_section && $1 == target_key {
+      print $2
+    }
+  ' "${WGCF_PROFILE_FILE}"
+}
+
+read_first_value() {
+  read_values "$1" "$2" | head -n 1
+}
+
+HTTP_ENABLED="$(to_bool "${ENABLE_HTTP_PROXY}")"
+SOCKS5_ENABLED="$(to_bool "${ENABLE_SOCKS5_PROXY}")"
+
+if [ "${HTTP_ENABLED}" = "false" ] && [ "${SOCKS5_ENABLED}" = "false" ]; then
+  echo "Both ENABLE_HTTP_PROXY and ENABLE_SOCKS5_PROXY are disabled." >&2
+  exit 1
+fi
+
+mkdir -p "${STATE_DIR}" "$(dirname "${WIREPROXY_CONFIG}")"
+cd "${STATE_DIR}"
+
+if [ ! -s "${WGCF_ACCOUNT_FILE}" ]; then
+  echo "No WARP account found. Registering a new account..."
+  wgcf register --accept-tos
+fi
+
+if [ -n "${WARP_LICENSE_KEY:-}" ]; then
+  echo "Applying WARP+ license..."
+  wgcf update --license "${WARP_LICENSE_KEY}"
+fi
+
+if [ ! -s "${WGCF_PROFILE_FILE}" ] || [ "${FORCE_REGENERATE_PROFILE:-false}" = "true" ] || [ -n "${WARP_LICENSE_KEY:-}" ]; then
+  echo "Generating WARP profile..."
+  wgcf generate
+fi
+
+PRIVATE_KEY="$(read_first_value Interface PrivateKey)"
+PUBLIC_KEY="$(read_first_value Peer PublicKey)"
+ENDPOINT="$(read_first_value Peer Endpoint)"
+
+if [ -z "${PRIVATE_KEY}" ] || [ -z "${PUBLIC_KEY}" ] || [ -z "${ENDPOINT}" ]; then
+  echo "Invalid wgcf profile: missing required fields." >&2
+  exit 1
+fi
+
+{
+  echo "[Interface]"
+  echo "PrivateKey = ${PRIVATE_KEY}"
+
+  read_values Interface Address | while IFS= read -r address; do
+    if [ -n "${address}" ]; then
+      echo "Address = ${address}"
+    fi
+  done
+
+  read_values Interface DNS | while IFS= read -r dns; do
+    if [ -n "${dns}" ]; then
+      echo "DNS = ${dns}"
+    fi
+  done
+
+  MTU="$(read_first_value Interface MTU)"
+  if [ -n "${MTU}" ]; then
+    echo "MTU = ${MTU}"
+  fi
+
+  echo
+  echo "[Peer]"
+  echo "PublicKey = ${PUBLIC_KEY}"
+  echo "Endpoint = ${ENDPOINT}"
+
+  read_values Peer AllowedIPs | while IFS= read -r allowed; do
+    if [ -n "${allowed}" ]; then
+      echo "AllowedIPs = ${allowed}"
+    fi
+  done
+
+  PRESHARED_KEY="$(read_first_value Peer PreSharedKey)"
+  if [ -n "${PRESHARED_KEY}" ]; then
+    echo "PreSharedKey = ${PRESHARED_KEY}"
+  fi
+} > "${WIREPROXY_CONFIG}"
+
+if [ "${SOCKS5_ENABLED}" = "true" ]; then
+  {
+    echo
+    echo "[Socks5]"
+    echo "BindAddress = ${SOCKS5_BIND_ADDR}:${SOCKS5_PROXY_PORT}"
+    if [ -n "${SOCKS5_USERNAME:-}" ]; then
+      echo "Username = ${SOCKS5_USERNAME}"
+    fi
+    if [ -n "${SOCKS5_PASSWORD:-}" ]; then
+      echo "Password = ${SOCKS5_PASSWORD}"
+    fi
+  } >> "${WIREPROXY_CONFIG}"
+fi
+
+if [ "${HTTP_ENABLED}" = "true" ]; then
+  {
+    echo
+    echo "[HTTP]"
+    echo "BindAddress = ${HTTP_BIND_ADDR}:${HTTP_PROXY_PORT}"
+    if [ -n "${HTTP_USERNAME:-}" ]; then
+      echo "Username = ${HTTP_USERNAME}"
+    fi
+    if [ -n "${HTTP_PASSWORD:-}" ]; then
+      echo "Password = ${HTTP_PASSWORD}"
+    fi
+  } >> "${WIREPROXY_CONFIG}"
+fi
+
+echo "Starting wireproxy..."
+exec wireproxy -c "${WIREPROXY_CONFIG}"

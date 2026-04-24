@@ -1,0 +1,16 @@
+services:
+  warp-proxy:
+    image: ghcr.io/your-org/your-repo:latest
+    container_name: warp-proxy
+    restart: unless-stopped
+    environment:
+      WARP_LICENSE_KEY: ""
+      HTTP_PROXY_PORT: "8080"
+      SOCKS5_PROXY_PORT: "1080"
+      ENABLE_HTTP_PROXY: "true"
+      ENABLE_SOCKS5_PROXY: "true"
+    volumes:
+      - ./data:/var/lib/warp
+    ports:
+      - "8080:8080"
+      - "1080:1080"
