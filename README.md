@@ -76,3 +76,20 @@ SOCKS5：
 ```bash
 curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace
 ```
+
+## 常见问题
+
+如果日志出现 `open wgcf-account.toml: permission denied`，通常是挂载目录权限不足。  
+当前镜像已内置自动修复权限逻辑（启动时先修正目录权限，再以 `warp` 用户运行）。  
+请更新镜像后重建容器：
+
+```bash
+docker pull ghcr.io/clockclock1/warp-proxy-docker:latest
+docker rm -f warp-proxy
+docker run -d --name warp-proxy \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  -e WARP_LICENSE_KEY= \
+  -v $(pwd)/data:/var/lib/warp \
+  ghcr.io/clockclock1/warp-proxy-docker:latest
+```

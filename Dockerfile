@@ -21,7 +21,7 @@ RUN set -eux; \
 
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata su-exec
 
 RUN addgroup -S warp \
     && adduser -S -D -H -h /var/lib/warp -s /sbin/nologin -G warp warp \
@@ -47,6 +47,6 @@ VOLUME ["/var/lib/warp"]
 
 EXPOSE 8080 1080
 
-USER warp
+USER root
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

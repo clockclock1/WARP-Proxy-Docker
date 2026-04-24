@@ -5,6 +5,7 @@ STATE_DIR="${STATE_DIR:-/var/lib/warp}"
 WIREPROXY_CONFIG="${WIREPROXY_CONFIG:-/etc/wireproxy/config.conf}"
 WGCF_ACCOUNT_FILE="${STATE_DIR}/wgcf-account.toml"
 WGCF_PROFILE_FILE="${STATE_DIR}/wgcf-profile.conf"
+WIREPROXY_CONFIG_DIR="$(dirname "${WIREPROXY_CONFIG}")"
 
 ENABLE_HTTP_PROXY="${ENABLE_HTTP_PROXY:-true}"
 ENABLE_SOCKS5_PROXY="${ENABLE_SOCKS5_PROXY:-true}"
@@ -12,6 +13,12 @@ HTTP_BIND_ADDR="${HTTP_BIND_ADDR:-0.0.0.0}"
 SOCKS5_BIND_ADDR="${SOCKS5_BIND_ADDR:-0.0.0.0}"
 HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8080}"
 SOCKS5_PROXY_PORT="${SOCKS5_PROXY_PORT:-1080}"
+
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
+  chown -R warp:warp "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
+  exec su-exec warp "$0" "$@"
+fi
 
 to_bool() {
   case "$1" in
@@ -47,7 +54,7 @@ if [ "${HTTP_ENABLED}" = "false" ] && [ "${SOCKS5_ENABLED}" = "false" ]; then
   exit 1
 fi
 
-mkdir -p "${STATE_DIR}" "$(dirname "${WIREPROXY_CONFIG}")"
+mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
 cd "${STATE_DIR}"
 
 if [ ! -s "${WGCF_ACCOUNT_FILE}" ]; then
