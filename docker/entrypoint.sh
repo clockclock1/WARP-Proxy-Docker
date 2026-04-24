@@ -13,11 +13,16 @@ HTTP_BIND_ADDR="${HTTP_BIND_ADDR:-0.0.0.0}"
 SOCKS5_BIND_ADDR="${SOCKS5_BIND_ADDR:-0.0.0.0}"
 HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8080}"
 SOCKS5_PROXY_PORT="${SOCKS5_PROXY_PORT:-1080}"
+WGCF_RETRIES="${WGCF_RETRIES:-5}"
+WGCF_RETRY_DELAY="${WGCF_RETRY_DELAY:-5}"
 
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
-  chown -R warp:warp "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
-  exec su-exec warp "$0" "$@"
+  chown -R warp:warp "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}" 2>/dev/null || true
+  if su-exec warp sh -c "touch '${STATE_DIR}/.warp-write-test' && rm -f '${STATE_DIR}/.warp-write-test'" >/dev/null 2>&1; then
+    exec su-exec warp "$0" "$@"
+  fi
+  echo "Warning: cannot write mounted directory as user 'warp', fallback to root runtime." >&2
 fi
 
 to_bool() {
@@ -46,6 +51,24 @@ read_first_value() {
   read_values "$1" "$2" | head -n 1
 }
 
+run_with_retry() {
+  retries="$1"
+  delay="$2"
+  shift 2
+  attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [ "${attempt}" -ge "${retries}" ]; then
+      return 1
+    fi
+    echo "Command failed, retrying in ${delay}s (${attempt}/${retries})..." >&2
+    attempt=$((attempt + 1))
+    sleep "${delay}"
+  done
+}
+
 HTTP_ENABLED="$(to_bool "${ENABLE_HTTP_PROXY}")"
 SOCKS5_ENABLED="$(to_bool "${ENABLE_SOCKS5_PROXY}")"
 
@@ -59,17 +82,17 @@ cd "${STATE_DIR}"
 
 if [ ! -s "${WGCF_ACCOUNT_FILE}" ]; then
   echo "No WARP account found. Registering a new account..."
-  wgcf register --accept-tos
+  run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf register --accept-tos
 fi
 
 if [ -n "${WARP_LICENSE_KEY:-}" ]; then
   echo "Applying WARP+ license..."
-  wgcf update --license "${WARP_LICENSE_KEY}"
+  run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf update --license "${WARP_LICENSE_KEY}"
 fi
 
 if [ ! -s "${WGCF_PROFILE_FILE}" ] || [ "${FORCE_REGENERATE_PROFILE:-false}" = "true" ] || [ -n "${WARP_LICENSE_KEY:-}" ]; then
   echo "Generating WARP profile..."
-  wgcf generate
+  run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf generate
 fi
 
 PRIVATE_KEY="$(read_first_value Interface PrivateKey)"

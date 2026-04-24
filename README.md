@@ -62,6 +62,8 @@ docker run -d --name warp-proxy \
 - `HTTP_USERNAME` / `HTTP_PASSWORD`：可选，HTTP 代理认证
 - `SOCKS5_USERNAME` / `SOCKS5_PASSWORD`：可选，SOCKS5 代理认证
 - `FORCE_REGENERATE_PROFILE`：设为 `true` 时强制重建 `wgcf-profile.conf`
+- `WGCF_RETRIES`：`wgcf` 网络相关操作重试次数，默认 `5`
+- `WGCF_RETRY_DELAY`：每次重试间隔秒数，默认 `5`
 
 ## 代理快速测试
 
@@ -90,6 +92,8 @@ docker run -d --name warp-proxy \
   -p 8080:8080 \
   -p 1080:1080 \
   -e WARP_LICENSE_KEY= \
+  -e WGCF_RETRIES=10 \
+  -e WGCF_RETRY_DELAY=8 \
   -v $(pwd)/data:/var/lib/warp \
   ghcr.io/clockclock1/warp-proxy-docker:latest
 ```
