@@ -1,6 +1,6 @@
 services:
   warp-proxy:
-    image: ghcr.io/your-org/your-repo:latest
+    image: ghcr.io/clockclock1/warp-proxy-docker:latest
     container_name: warp-proxy
     restart: unless-stopped
     environment:

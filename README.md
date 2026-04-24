@@ -19,9 +19,9 @@
 
 发布标签示例：
 
-- `ghcr.io/<owner>/<repo>:latest`（默认分支）
-- `ghcr.io/<owner>/<repo>:<tag>`
-- `ghcr.io/<owner>/<repo>:sha-xxxx`
+- `ghcr.io/clockclock1/warp-proxy-docker:latest`（默认分支）
+- `ghcr.io/clockclock1/warp-proxy-docker:<tag>`
+- `ghcr.io/clockclock1/warp-proxy-docker:sha-xxxx`
 
 ## 本地构建
 
@@ -37,7 +37,7 @@ docker run -d --name warp-proxy \
   -p 1080:1080 \
   -e WARP_LICENSE_KEY= \
   -v $(pwd)/data:/var/lib/warp \
-  ghcr.io/<owner>/<repo>:latest
+  ghcr.io/clockclock1/warp-proxy-docker:latest
 ```
 
 首次启动会自动生成并持久化：
@@ -47,7 +47,8 @@ docker run -d --name warp-proxy \
 
 ## Docker Compose
 
-可直接使用项目内的 `docker-compose.yml`，把镜像地址改成你的 GHCR 地址即可。
+可直接使用项目内的 `docker-compose.yml`，默认镜像已经是：
+`ghcr.io/clockclock1/warp-proxy-docker:latest`
 
 ## 环境变量
 
