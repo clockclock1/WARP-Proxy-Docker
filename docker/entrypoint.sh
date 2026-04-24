@@ -13,7 +13,7 @@ HTTP_BIND_ADDR="${HTTP_BIND_ADDR:-0.0.0.0}"
 SOCKS5_BIND_ADDR="${SOCKS5_BIND_ADDR:-0.0.0.0}"
 HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8080}"
 SOCKS5_PROXY_PORT="${SOCKS5_PROXY_PORT:-1080}"
-WGCF_RETRIES="${WGCF_RETRIES:-5}"
+WGCF_RETRIES="${WGCF_RETRIES:-0}"
 WGCF_RETRY_DELAY="${WGCF_RETRY_DELAY:-5}"
 
 if [ "$(id -u)" = "0" ]; then
@@ -60,10 +60,14 @@ run_with_retry() {
     if "$@"; then
       return 0
     fi
-    if [ "${attempt}" -ge "${retries}" ]; then
+    if [ "${retries}" -gt 0 ] && [ "${attempt}" -ge "${retries}" ]; then
       return 1
     fi
-    echo "Command failed, retrying in ${delay}s (${attempt}/${retries})..." >&2
+    if [ "${retries}" -gt 0 ]; then
+      echo "Command failed, retrying in ${delay}s (${attempt}/${retries})..." >&2
+    else
+      echo "Command failed, retrying in ${delay}s (attempt ${attempt}, unlimited retries)..." >&2
+    fi
     attempt=$((attempt + 1))
     sleep "${delay}"
   done
@@ -80,17 +84,31 @@ fi
 mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
 cd "${STATE_DIR}"
 
+if [ ! -s "${WGCF_ACCOUNT_FILE}" ] && [ -n "${WARP_ACCOUNT_TOML_BASE64:-}" ]; then
+  echo "Importing wgcf-account.toml from WARP_ACCOUNT_TOML_BASE64..."
+  printf "%s" "${WARP_ACCOUNT_TOML_BASE64}" | base64 -d > "${WGCF_ACCOUNT_FILE}"
+fi
+
+if [ ! -s "${WGCF_PROFILE_FILE}" ] && [ -n "${WARP_PROFILE_CONF_BASE64:-}" ]; then
+  echo "Importing wgcf-profile.conf from WARP_PROFILE_CONF_BASE64..."
+  printf "%s" "${WARP_PROFILE_CONF_BASE64}" | base64 -d > "${WGCF_PROFILE_FILE}"
+fi
+
 if [ ! -s "${WGCF_ACCOUNT_FILE}" ]; then
   echo "No WARP account found. Registering a new account..."
   run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf register --accept-tos
 fi
 
 if [ -n "${WARP_LICENSE_KEY:-}" ]; then
-  echo "Applying WARP+ license..."
-  run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf update --license "${WARP_LICENSE_KEY}"
+  if [ -s "${WGCF_ACCOUNT_FILE}" ]; then
+    echo "Applying WARP+ license..."
+    run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf update --license "${WARP_LICENSE_KEY}"
+  else
+    echo "Warning: WARP_LICENSE_KEY is set but wgcf-account.toml is missing; skip license update." >&2
+  fi
 fi
 
-if [ ! -s "${WGCF_PROFILE_FILE}" ] || [ "${FORCE_REGENERATE_PROFILE:-false}" = "true" ] || [ -n "${WARP_LICENSE_KEY:-}" ]; then
+if [ ! -s "${WGCF_PROFILE_FILE}" ] || [ "${FORCE_REGENERATE_PROFILE:-false}" = "true" ]; then
   echo "Generating WARP profile..."
   run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf generate
 fi
