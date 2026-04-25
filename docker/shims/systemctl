@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cmd="${1:-}"
+service="${2:-}"
+shift 2 >/dev/null 2>&1 || true
+
+STATE_DIR="${SYSTEMCTL_SHIM_STATE_DIR:-/run/warp-shim}"
+ENABLED_MARK="${STATE_DIR}/wgcf.enabled"
+mkdir -p "${STATE_DIR}"
+
+is_wg_up() {
+  ip link show wgcf >/dev/null 2>&1
+}
+
+wg_up() {
+  wg-quick up wgcf >/dev/null 2>&1 || true
+}
+
+wg_down() {
+  wg-quick down wgcf >/dev/null 2>&1 || true
+}
+
+case "${cmd}" in
+  is-active)
+    case "${service}" in
+      wg-quick@wgcf)
+        if is_wg_up; then
+          echo "active"
+          exit 0
+        fi
+        echo "inactive"
+        exit 3
+        ;;
+      warp-svc)
+        echo "inactive"
+        exit 3
+        ;;
+    esac
+    ;;
+  is-enabled)
+    case "${service}" in
+      wg-quick@wgcf)
+        if [ -f "${ENABLED_MARK}" ]; then
+          echo "enabled"
+          exit 0
+        fi
+        echo "disabled"
+        exit 1
+        ;;
+      warp-svc)
+        echo "disabled"
+        exit 1
+        ;;
+    esac
+    ;;
+  enable)
+    case "${service}" in
+      wg-quick@wgcf)
+        touch "${ENABLED_MARK}"
+        for arg in "$@"; do
+          [ "${arg}" = "--now" ] && wg_up
+        done
+        exit 0
+        ;;
+      warp-svc) exit 0 ;;
+    esac
+    ;;
+  disable)
+    case "${service}" in
+      wg-quick@wgcf)
+        rm -f "${ENABLED_MARK}"
+        for arg in "$@"; do
+          [ "${arg}" = "--now" ] && wg_down
+        done
+        exit 0
+        ;;
+      warp-svc) exit 0 ;;
+    esac
+    ;;
+  start)
+    case "${service}" in
+      wg-quick@wgcf) wg_up; exit 0 ;;
+      warp-svc) exit 0 ;;
+    esac
+    ;;
+  stop)
+    case "${service}" in
+      wg-quick@wgcf) wg_down; exit 0 ;;
+      warp-svc) exit 0 ;;
+    esac
+    ;;
+  restart)
+    case "${service}" in
+      wg-quick@wgcf)
+        wg_down
+        wg_up
+        exit 0
+        ;;
+      warp-svc) exit 0 ;;
+    esac
+    ;;
+esac
+
+echo "systemctl shim: unsupported command '${cmd} ${service} $*'" >&2
+exit 0

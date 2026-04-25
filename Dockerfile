@@ -19,27 +19,44 @@ RUN set -eux; \
     tar -xzf /tmp/wireproxy.tar.gz -C /tmp wireproxy; \
     chmod +x /tmp/wireproxy
 
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache ca-certificates tzdata su-exec
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       bash \
+       ca-certificates \
+       curl \
+       gawk \
+       iproute2 \
+       iptables \
+       iputils-ping \
+       procps \
+       wireguard-tools \
+       wireguard-go \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN addgroup -S warp \
-    && adduser -S -D -H -h /var/lib/warp -s /sbin/nologin -G warp warp \
-    && mkdir -p /var/lib/warp /etc/wireproxy \
-    && chown -R warp:warp /var/lib/warp /etc/wireproxy
+RUN mkdir -p /opt/warp/shims /etc/wireproxy /etc/wireguard /etc/warp /var/lib/warp
 
 COPY --from=downloader /tmp/wgcf /usr/local/bin/wgcf
 COPY --from=downloader /tmp/wireproxy /usr/local/bin/wireproxy
+COPY docker/warp.sh /opt/warp/warp.sh
+COPY docker/shims/systemctl /opt/warp/shims/systemctl
+COPY docker/shims/journalctl /opt/warp/shims/journalctl
+COPY docker/shims/systemd-detect-virt /opt/warp/shims/systemd-detect-virt
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/wgcf /usr/local/bin/wireproxy /opt/warp/warp.sh \
+    /opt/warp/shims/systemctl /opt/warp/shims/journalctl /opt/warp/shims/systemd-detect-virt \
+    /usr/local/bin/entrypoint.sh
 
-ENV STATE_DIR=/var/lib/warp \
+ENV PATH="/opt/warp/shims:${PATH}" \
+    STATE_DIR=/var/lib/warp \
     WIREPROXY_CONFIG=/etc/wireproxy/config.conf \
+    WARP_MODE=d \
+    WARP_SCRIPT_SOURCE=local \
+    WARP_SCRIPT_LOCAL_PATH=/opt/warp/warp.sh \
     ENABLE_HTTP_PROXY=true \
     ENABLE_SOCKS5_PROXY=true \
-    WGCF_RETRIES=0 \
-    WGCF_RETRY_DELAY=5 \
     HTTP_BIND_ADDR=0.0.0.0 \
     SOCKS5_BIND_ADDR=0.0.0.0 \
     HTTP_PROXY_PORT=8080 \
@@ -48,7 +65,5 @@ ENV STATE_DIR=/var/lib/warp \
 VOLUME ["/var/lib/warp"]
 
 EXPOSE 8080 1080
-
-USER root
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

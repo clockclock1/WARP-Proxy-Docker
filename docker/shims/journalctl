@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "journalctl shim: no systemd journal available in container." >&2
+exit 0

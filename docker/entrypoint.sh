@@ -1,11 +1,13 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 STATE_DIR="${STATE_DIR:-/var/lib/warp}"
 WIREPROXY_CONFIG="${WIREPROXY_CONFIG:-/etc/wireproxy/config.conf}"
-WGCF_ACCOUNT_FILE="${STATE_DIR}/wgcf-account.toml"
-WGCF_PROFILE_FILE="${STATE_DIR}/wgcf-profile.conf"
 WIREPROXY_CONFIG_DIR="$(dirname "${WIREPROXY_CONFIG}")"
+
+WARP_MODE="${WARP_MODE:-d}"
+WARP_SCRIPT_SOURCE="${WARP_SCRIPT_SOURCE:-local}"
+WARP_SCRIPT_LOCAL_PATH="${WARP_SCRIPT_LOCAL_PATH:-/opt/warp/warp.sh}"
 
 ENABLE_HTTP_PROXY="${ENABLE_HTTP_PROXY:-true}"
 ENABLE_SOCKS5_PROXY="${ENABLE_SOCKS5_PROXY:-true}"
@@ -13,28 +15,19 @@ HTTP_BIND_ADDR="${HTTP_BIND_ADDR:-0.0.0.0}"
 SOCKS5_BIND_ADDR="${SOCKS5_BIND_ADDR:-0.0.0.0}"
 HTTP_PROXY_PORT="${HTTP_PROXY_PORT:-8080}"
 SOCKS5_PROXY_PORT="${SOCKS5_PROXY_PORT:-1080}"
-WGCF_RETRIES="${WGCF_RETRIES:-0}"
-WGCF_RETRY_DELAY="${WGCF_RETRY_DELAY:-5}"
 
-if [ "$(id -u)" = "0" ]; then
-  mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
-  chown -R warp:warp "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}" 2>/dev/null || true
-  if su-exec warp sh -c "touch '${STATE_DIR}/.warp-write-test' && rm -f '${STATE_DIR}/.warp-write-test'" >/dev/null 2>&1; then
-    exec su-exec warp "$0" "$@"
-  fi
-  echo "Warning: cannot write mounted directory as user 'warp', fallback to root runtime." >&2
-fi
+PROFILE_FILE=""
 
-to_bool() {
-  case "$1" in
-    1|true|TRUE|yes|YES|on|ON) echo "true" ;;
-    *) echo "false" ;;
+is_true() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
 read_values() {
-  section="$1"
-  key="$2"
+  local section="$1"
+  local key="$2"
   awk -F ' *= *' -v target_section="${section}" -v target_key="${key}" '
     /^\[/ {
       current=$0
@@ -44,63 +37,70 @@ read_values() {
     current == target_section && $1 == target_key {
       print $2
     }
-  ' "${WGCF_PROFILE_FILE}"
+  ' "${PROFILE_FILE}"
 }
 
 read_first_value() {
   read_values "$1" "$2" | head -n 1
 }
 
-run_with_retry() {
-  retries="$1"
-  delay="$2"
-  shift 2
-  attempt=1
-  while true; do
-    if "$@"; then
-      return 0
-    fi
-    if [ "${retries}" -gt 0 ] && [ "${attempt}" -ge "${retries}" ]; then
-      return 1
-    fi
-    if [ "${retries}" -gt 0 ]; then
-      echo "Command failed, retrying in ${delay}s (${attempt}/${retries})..." >&2
-    else
-      echo "Command failed, retrying in ${delay}s (attempt ${attempt}, unlimited retries)..." >&2
-    fi
-    attempt=$((attempt + 1))
-    sleep "${delay}"
-  done
+run_warp_script() {
+  case "${WARP_MODE}" in
+    d|4|6) ;;
+    *)
+      echo "Invalid WARP_MODE: ${WARP_MODE}. Allowed: d, 4, 6" >&2
+      exit 1
+      ;;
+  esac
+
+  echo "Starting warp.sh with mode '${WARP_MODE}'..."
+  if [ "${WARP_SCRIPT_SOURCE}" = "remote" ]; then
+    bash <(curl -fsSL git.io/warp.sh) "${WARP_MODE}"
+  else
+    bash "${WARP_SCRIPT_LOCAL_PATH}" "${WARP_MODE}"
+  fi
 }
 
-HTTP_ENABLED="$(to_bool "${ENABLE_HTTP_PROXY}")"
-SOCKS5_ENABLED="$(to_bool "${ENABLE_SOCKS5_PROXY}")"
+find_profile() {
+  local candidates=(
+    "${STATE_DIR}/wgcf-profile.conf"
+    "/etc/warp/wgcf-profile.conf"
+    "/root/wgcf-profile.conf"
+    "/wgcf-profile.conf"
+  )
 
-if [ "${HTTP_ENABLED}" = "false" ] && [ "${SOCKS5_ENABLED}" = "false" ]; then
-  echo "Both ENABLE_HTTP_PROXY and ENABLE_SOCKS5_PROXY are disabled." >&2
+  local c
+  for c in "${candidates[@]}"; do
+    if [ -s "${c}" ]; then
+      PROFILE_FILE="${c}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}" /etc/wireguard /etc/warp
+cd "${STATE_DIR}"
+
+run_warp_script
+
+if [ -s "/etc/warp/wgcf-profile.conf" ]; then
+  cp -f "/etc/warp/wgcf-profile.conf" "${STATE_DIR}/wgcf-profile.conf"
+fi
+
+if [ -s "/etc/warp/wgcf-account.toml" ]; then
+  cp -f "/etc/warp/wgcf-account.toml" "${STATE_DIR}/wgcf-account.toml"
+fi
+
+if ! find_profile; then
+  echo "wgcf profile not found after running warp.sh." >&2
   exit 1
 fi
 
-mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
-cd "${STATE_DIR}"
-
-if [ ! -s "${WGCF_ACCOUNT_FILE}" ]; then
-  echo "No WARP account found. Registering a new account..."
-  run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf register --accept-tos
-fi
-
-if [ -n "${WARP_LICENSE_KEY:-}" ]; then
-  if [ -s "${WGCF_ACCOUNT_FILE}" ]; then
-    echo "Applying WARP+ license..."
-    run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf update --license "${WARP_LICENSE_KEY}"
-  else
-    echo "Warning: WARP_LICENSE_KEY is set but wgcf-account.toml is missing; skip license update." >&2
-  fi
-fi
-
-if [ ! -s "${WGCF_PROFILE_FILE}" ] || [ "${FORCE_REGENERATE_PROFILE:-false}" = "true" ]; then
-  echo "Generating WARP profile..."
-  run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf generate
+if ! is_true "${ENABLE_HTTP_PROXY}" && ! is_true "${ENABLE_SOCKS5_PROXY}"; then
+  echo "Both ENABLE_HTTP_PROXY and ENABLE_SOCKS5_PROXY are disabled." >&2
+  exit 1
 fi
 
 PRIVATE_KEY="$(read_first_value Interface PrivateKey)"
@@ -116,65 +116,47 @@ fi
   echo "[Interface]"
   echo "PrivateKey = ${PRIVATE_KEY}"
 
-  read_values Interface Address | while IFS= read -r address; do
-    if [ -n "${address}" ]; then
-      echo "Address = ${address}"
-    fi
-  done
+  while IFS= read -r address; do
+    [ -n "${address}" ] && echo "Address = ${address}"
+  done < <(read_values Interface Address)
 
-  read_values Interface DNS | while IFS= read -r dns; do
-    if [ -n "${dns}" ]; then
-      echo "DNS = ${dns}"
-    fi
-  done
+  while IFS= read -r dns; do
+    [ -n "${dns}" ] && echo "DNS = ${dns}"
+  done < <(read_values Interface DNS)
 
   MTU="$(read_first_value Interface MTU)"
-  if [ -n "${MTU}" ]; then
-    echo "MTU = ${MTU}"
-  fi
+  [ -n "${MTU}" ] && echo "MTU = ${MTU}"
 
   echo
   echo "[Peer]"
   echo "PublicKey = ${PUBLIC_KEY}"
   echo "Endpoint = ${ENDPOINT}"
 
-  read_values Peer AllowedIPs | while IFS= read -r allowed; do
-    if [ -n "${allowed}" ]; then
-      echo "AllowedIPs = ${allowed}"
-    fi
-  done
+  while IFS= read -r allowed; do
+    [ -n "${allowed}" ] && echo "AllowedIPs = ${allowed}"
+  done < <(read_values Peer AllowedIPs)
 
   PRESHARED_KEY="$(read_first_value Peer PreSharedKey)"
-  if [ -n "${PRESHARED_KEY}" ]; then
-    echo "PreSharedKey = ${PRESHARED_KEY}"
-  fi
+  [ -n "${PRESHARED_KEY}" ] && echo "PreSharedKey = ${PRESHARED_KEY}"
 } > "${WIREPROXY_CONFIG}"
 
-if [ "${SOCKS5_ENABLED}" = "true" ]; then
+if is_true "${ENABLE_SOCKS5_PROXY}"; then
   {
     echo
     echo "[Socks5]"
     echo "BindAddress = ${SOCKS5_BIND_ADDR}:${SOCKS5_PROXY_PORT}"
-    if [ -n "${SOCKS5_USERNAME:-}" ]; then
-      echo "Username = ${SOCKS5_USERNAME}"
-    fi
-    if [ -n "${SOCKS5_PASSWORD:-}" ]; then
-      echo "Password = ${SOCKS5_PASSWORD}"
-    fi
+    [ -n "${SOCKS5_USERNAME:-}" ] && echo "Username = ${SOCKS5_USERNAME}"
+    [ -n "${SOCKS5_PASSWORD:-}" ] && echo "Password = ${SOCKS5_PASSWORD}"
   } >> "${WIREPROXY_CONFIG}"
 fi
 
-if [ "${HTTP_ENABLED}" = "true" ]; then
+if is_true "${ENABLE_HTTP_PROXY}"; then
   {
     echo
     echo "[HTTP]"
     echo "BindAddress = ${HTTP_BIND_ADDR}:${HTTP_PROXY_PORT}"
-    if [ -n "${HTTP_USERNAME:-}" ]; then
-      echo "Username = ${HTTP_USERNAME}"
-    fi
-    if [ -n "${HTTP_PASSWORD:-}" ]; then
-      echo "Password = ${HTTP_PASSWORD}"
-    fi
+    [ -n "${HTTP_USERNAME:-}" ] && echo "Username = ${HTTP_USERNAME}"
+    [ -n "${HTTP_PASSWORD:-}" ] && echo "Password = ${HTTP_PASSWORD}"
   } >> "${WIREPROXY_CONFIG}"
 fi
 

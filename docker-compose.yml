@@ -3,12 +3,17 @@ services:
     image: ghcr.io/clockclock1/warp-proxy-docker:latest
     container_name: warp-proxy
     restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     environment:
-      WARP_LICENSE_KEY: ""
-      HTTP_PROXY_PORT: "8080"
-      SOCKS5_PROXY_PORT: "1080"
+      WARP_MODE: "d"
+      WARP_SCRIPT_SOURCE: "local"
       ENABLE_HTTP_PROXY: "true"
       ENABLE_SOCKS5_PROXY: "true"
+      HTTP_PROXY_PORT: "8080"
+      SOCKS5_PROXY_PORT: "1080"
     volumes:
       - ./data:/var/lib/warp
     ports:
