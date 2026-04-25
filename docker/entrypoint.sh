@@ -84,16 +84,6 @@ fi
 mkdir -p "${STATE_DIR}" "${WIREPROXY_CONFIG_DIR}"
 cd "${STATE_DIR}"
 
-if [ ! -s "${WGCF_ACCOUNT_FILE}" ] && [ -n "${WARP_ACCOUNT_TOML_BASE64:-}" ]; then
-  echo "Importing wgcf-account.toml from WARP_ACCOUNT_TOML_BASE64..."
-  printf "%s" "${WARP_ACCOUNT_TOML_BASE64}" | base64 -d > "${WGCF_ACCOUNT_FILE}"
-fi
-
-if [ ! -s "${WGCF_PROFILE_FILE}" ] && [ -n "${WARP_PROFILE_CONF_BASE64:-}" ]; then
-  echo "Importing wgcf-profile.conf from WARP_PROFILE_CONF_BASE64..."
-  printf "%s" "${WARP_PROFILE_CONF_BASE64}" | base64 -d > "${WGCF_PROFILE_FILE}"
-fi
-
 if [ ! -s "${WGCF_ACCOUNT_FILE}" ]; then
   echo "No WARP account found. Registering a new account..."
   run_with_retry "${WGCF_RETRIES}" "${WGCF_RETRY_DELAY}" wgcf register --accept-tos

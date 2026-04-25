@@ -63,8 +63,6 @@ docker run -d --name warp-proxy \
 - `FORCE_REGENERATE_PROFILE`：设为 `true` 时强制重建 `wgcf-profile.conf`
 - `WGCF_RETRIES`：`wgcf` 重试次数，默认 `0`（无限重试）
 - `WGCF_RETRY_DELAY`：重试间隔秒数，默认 `5`
-- `WARP_ACCOUNT_TOML_BASE64`：可选，注入 `wgcf-account.toml`（base64）
-- `WARP_PROFILE_CONF_BASE64`：可选，注入 `wgcf-profile.conf`（base64）
 
 ## 代理快速测试
 
@@ -80,11 +78,6 @@ SOCKS5：
 curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace
 ```
 
-## 与 warp.sh 的关系
-
-`warp.sh` 的核心思路也是 `wgcf register + wgcf generate` 并循环重试。  
-本镜像已对齐该思路：默认无限重试，且增加了“外部注入账号文件”的能力。
-
 ## 常见问题
 
 ### 1) `open wgcf-account.toml: permission denied`
@@ -94,25 +87,8 @@ curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace
 ### 2) `TLS handshake timeout`（注册 Cloudflare 接口超时）
 
 这通常是服务器出口网络问题，不是容器逻辑问题。  
-如果你的机器始终无法访问 `api.cloudflareclient.com`，建议在另一台可用机器生成文件后导入。
-
-1. 在可访问 Cloudflare 的机器执行：
+建议优先检查宿主机到以下地址的连通性：
 
 ```bash
-wgcf register --accept-tos
-wgcf generate
-base64 -w0 wgcf-account.toml
-base64 -w0 wgcf-profile.conf
-```
-
-2. 在服务器启动容器时注入：
-
-```bash
-docker run -d --name warp-proxy \
-  -p 8080:8080 \
-  -p 1080:1080 \
-  -e WARP_ACCOUNT_TOML_BASE64='替换为上一步输出1' \
-  -e WARP_PROFILE_CONF_BASE64='替换为上一步输出2' \
-  -v $(pwd)/data:/var/lib/warp \
-  ghcr.io/clockclock1/warp-proxy-docker:latest
+curl -4 -m 20 -sv https://api.cloudflareclient.com/v0a1922/reg -o /dev/null
 ```
