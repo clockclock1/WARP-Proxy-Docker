@@ -1,93 +1,121 @@
-# WARP 代理 Docker 镜像
+# WARP Proxy Docker
 
-该镜像会在容器内自动通过 `wgcf` 注册 Cloudflare WARP，并启动 `wireproxy` 对外提供：
+基于 Cloudflare WARP + `wireproxy` 的代理容器镜像。  
+容器启动后自动注册/生成 WARP 配置，并对外提供：
 
-- HTTP 代理（默认 `:8080`）
-- SOCKS5 代理（默认 `:1080`）
+- HTTP 代理（默认 `8080`）
+- SOCKS5 代理（默认 `1080`）
 
-其他应用通过这两个代理端口转发的流量，会走 WARP 网络出口。
+镜像地址：
+`ghcr.io/clockclock1/warp-proxy-docker:latest`
 
-## GitHub Actions 自动发布到 GHCR
+## 功能特性
 
-工作流文件：`.github/workflows/docker-publish.yml`
+- 自动初始化 WARP 账户与配置（首次启动）
+- 支持 HTTP / SOCKS5 双代理
+- 支持端口、认证、重试参数配置
+- 支持 Docker 与 Docker Compose 部署
+- 配置持久化到挂载目录
 
-触发条件：
-
-- 推送到 `main`
-- 推送匹配 `v*` 的 tag
-- 手动触发 `workflow_dispatch`
-
-发布标签示例：
-
-- `ghcr.io/clockclock1/warp-proxy-docker:latest`（默认分支）
-- `ghcr.io/clockclock1/warp-proxy-docker:<tag>`
-- `ghcr.io/clockclock1/warp-proxy-docker:sha-xxxx`
-
-## 本地构建
+## 快速开始（Docker）
 
 ```bash
-docker build -t warp-proxy:local .
-```
+mkdir -p ./warp-data
 
-## 运行容器
-
-```bash
 docker run -d --name warp-proxy \
+  --restart unless-stopped \
   -p 8080:8080 \
   -p 1080:1080 \
-  -v $(pwd)/data:/var/lib/warp \
+  -v $(pwd)/warp-data:/var/lib/warp \
   ghcr.io/clockclock1/warp-proxy-docker:latest
 ```
 
-首次启动会自动生成并持久化：
+查看运行日志：
 
-- `/var/lib/warp/wgcf-account.toml`
-- `/var/lib/warp/wgcf-profile.conf`
+```bash
+docker logs -f warp-proxy
+```
 
-## Docker Compose
+## 使用 Docker Compose
 
-可直接使用项目内的 `docker-compose.yml`，默认镜像已是：
-`ghcr.io/clockclock1/warp-proxy-docker:latest`
+```yaml
+services:
+  warp-proxy:
+    image: ghcr.io/clockclock1/warp-proxy-docker:latest
+    container_name: warp-proxy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "1080:1080"
+    volumes:
+      - ./warp-data:/var/lib/warp
+```
 
-## 环境变量
+启动：
 
-- `WARP_LICENSE_KEY`：可选，WARP+ 许可证
-- `ENABLE_HTTP_PROXY`：`true` 或 `false`
-- `ENABLE_SOCKS5_PROXY`：`true` 或 `false`
-- `HTTP_BIND_ADDR`：默认 `0.0.0.0`
-- `SOCKS5_BIND_ADDR`：默认 `0.0.0.0`
-- `HTTP_PROXY_PORT`：默认 `8080`
-- `SOCKS5_PROXY_PORT`：默认 `1080`
-- `HTTP_USERNAME` / `HTTP_PASSWORD`：可选，HTTP 代理认证
-- `SOCKS5_USERNAME` / `SOCKS5_PASSWORD`：可选，SOCKS5 代理认证
-- `FORCE_REGENERATE_PROFILE`：设为 `true` 时强制重建 `wgcf-profile.conf`
-- `WGCF_RETRIES`：`wgcf` 重试次数，默认 `0`（无限重试）
-- `WGCF_RETRY_DELAY`：重试间隔秒数，默认 `5`
+```bash
+docker compose up -d
+```
 
-## 代理快速测试
+## 代理使用方式
 
-HTTP：
+- HTTP：`http://<服务器IP>:8080`
+- SOCKS5：`socks5://<服务器IP>:1080`
+
+测试命令：
 
 ```bash
 curl -x http://127.0.0.1:8080 https://www.cloudflare.com/cdn-cgi/trace
+curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace
 ```
 
-SOCKS5：
+## 配置项（环境变量）
+
+- `WARP_LICENSE_KEY`：可选，设置后尝试启用 WARP+
+- `ENABLE_HTTP_PROXY`：`true/false`，默认 `true`
+- `ENABLE_SOCKS5_PROXY`：`true/false`，默认 `true`
+- `HTTP_PROXY_PORT`：默认 `8080`
+- `SOCKS5_PROXY_PORT`：默认 `1080`
+- `HTTP_USERNAME` / `HTTP_PASSWORD`：HTTP 代理认证
+- `SOCKS5_USERNAME` / `SOCKS5_PASSWORD`：SOCKS5 代理认证
+- `WGCF_RETRIES`：`wgcf` 重试次数，默认 `0`（无限重试）
+- `WGCF_RETRY_DELAY`：重试间隔秒数，默认 `5`
+
+带参数启动示例：
 
 ```bash
-curl --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace
+docker run -d --name warp-proxy \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  -e ENABLE_HTTP_PROXY=true \
+  -e ENABLE_SOCKS5_PROXY=true \
+  -e WGCF_RETRIES=0 \
+  -e WGCF_RETRY_DELAY=8 \
+  -v $(pwd)/warp-data:/var/lib/warp \
+  ghcr.io/clockclock1/warp-proxy-docker:latest
+```
+
+## 更新镜像
+
+```bash
+docker pull ghcr.io/clockclock1/warp-proxy-docker:latest
+docker rm -f warp-proxy
+docker run -d --name warp-proxy \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -p 1080:1080 \
+  -v $(pwd)/warp-data:/var/lib/warp \
+  ghcr.io/clockclock1/warp-proxy-docker:latest
 ```
 
 ## 常见问题
 
-### 1) `open wgcf-account.toml: permission denied`
+1. 出现 `permission denied`  
+请检查挂载目录权限，或改用 Docker volume 挂载。
 
-通常是挂载目录权限不足。镜像已内置权限修复逻辑：启动时先修正目录权限，再降权运行。
-
-### 2) `TLS handshake timeout`（注册 Cloudflare 接口超时）
-
-这通常是服务器出口网络问题，不是容器逻辑问题。  
-建议优先检查宿主机到以下地址的连通性：
+2. 出现 `TLS handshake timeout`  
+通常是服务器到 `api.cloudflareclient.com` 的网络连通性问题，可先在宿主机测试：
 
 ```bash
 curl -4 -m 20 -sv https://api.cloudflareclient.com/v0a1922/reg -o /dev/null
